@@ -12,7 +12,7 @@ Options:
   -a, --account ACCOUNT   GitHub user or organization name (required)
   -d, --dest DIR          Destination directory for mirrored repos (default: ./mirrors)
   -t, --token TOKEN       GitHub token (or set GITHUB_TOKEN env var)
-  -T, --token-file FILE   Read GitHub token from file (first line)
+  -T, --token-file FILE   Read .env-style credentials file (ACCOUNT/GITHUB_TOKEN)
   -n, --dry-run           Print planned actions without cloning/fetching
   -s, --skip-forks        Skip repositories where "fork" is true
   -r, --repo-regex REGEX  Only process repositories whose name matches REGEX
@@ -23,6 +23,7 @@ Notes:
   - Existing mirrors are updated with fetch --prune.
   - New repositories are mirrored with git clone --mirror.
   - LFS objects are fetched only when --with-lfs is enabled.
+  - Credential file supports ACCOUNT/GITHUB_ACCOUNT and TOKEN/GITHUB_TOKEN.
   - For private repositories, pass a token with appropriate permissions.
   - Uses curl when available, otherwise falls back to wget.
 EOF
@@ -202,6 +203,64 @@ safe_clone_url() {
   printf 'https://github.com/%s.git' "$full_name"
 }
 
+load_credentials_file() {
+  local creds_file="$1"
+  local first_plain_value=""
+
+  [[ ! -r "$creds_file" ]] && err "Token file is not readable: ${creds_file}"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    local trimmed key value
+
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+
+    [[ -z "$trimmed" ]] && continue
+    [[ "${trimmed:0:1}" == "#" ]] && continue
+
+    if [[ "$trimmed" != *=* ]]; then
+      if [[ -z "$first_plain_value" ]]; then
+        first_plain_value="$trimmed"
+      fi
+      continue
+    fi
+
+    key="${trimmed%%=*}"
+    value="${trimmed#*=}"
+
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+
+    case "$key" in
+      ACCOUNT|GITHUB_ACCOUNT)
+        if [[ "$ACCOUNT_SET_BY_ARG" == "0" && -z "$ACCOUNT" ]]; then
+          ACCOUNT="$value"
+        fi
+        ;;
+      TOKEN|GITHUB_TOKEN)
+        if [[ "$TOKEN_SET_BY_ARG" == "0" && -z "$TOKEN" ]]; then
+          TOKEN="$value"
+        fi
+        ;;
+      *)
+        ;;
+    esac
+  done < "$creds_file"
+
+  # Backward compatibility: token-only file using first non-comment line.
+  if [[ "$TOKEN_SET_BY_ARG" == "0" && -z "$TOKEN" && -n "$first_plain_value" ]]; then
+    TOKEN="$first_plain_value"
+  fi
+}
+
 clone_or_update_repo() {
   local full_name="$1"
   local dest_dir="$2"
@@ -298,12 +357,15 @@ DRY_RUN="0"
 SKIP_FORKS="0"
 REPO_REGEX=""
 WITH_LFS="0"
+ACCOUNT_SET_BY_ARG="0"
+TOKEN_SET_BY_ARG="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--account)
       [[ $# -lt 2 ]] && err "Missing value for $1"
       ACCOUNT="$2"
+      ACCOUNT_SET_BY_ARG="1"
       shift 2
       ;;
     -d|--dest)
@@ -314,6 +376,7 @@ while [[ $# -gt 0 ]]; do
     -t|--token)
       [[ $# -lt 2 ]] && err "Missing value for $1"
       TOKEN="$2"
+      TOKEN_SET_BY_ARG="1"
       shift 2
       ;;
     -T|--token-file)
@@ -349,9 +412,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$TOKEN_FILE" ]]; then
-  [[ ! -r "$TOKEN_FILE" ]] && err "Token file is not readable: ${TOKEN_FILE}"
-  TOKEN="$(head -n1 "$TOKEN_FILE" | tr -d '\r\n')"
-  [[ -z "$TOKEN" ]] && err "Token file is empty: ${TOKEN_FILE}"
+  load_credentials_file "$TOKEN_FILE"
 fi
 
 if [[ -n "$REPO_REGEX" ]]; then

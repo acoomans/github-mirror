@@ -31,7 +31,7 @@ Options:
 - `-a, --account ACCOUNT` GitHub user or organization name (required)
 - `-d, --dest DIR` destination directory for mirrored repos (default: `./mirrors`)
 - `-t, --token TOKEN` GitHub token (or set `GITHUB_TOKEN`)
-- `-T, --token-file FILE` read GitHub token from first line of file
+- `-T, --token-file FILE` read `.env`-style credentials file (`ACCOUNT`, `GITHUB_TOKEN`)
 - `-n, --dry-run` show planned operations without cloning/fetching
 - `-s, --skip-forks` skip repositories where `fork=true`
 - `-r, --repo-regex REGEX` only process repositories whose name matches the regex
@@ -40,50 +40,57 @@ Options:
 
 ## Recommended Auth Setup
 
-Using `--token-file` avoids putting your token in shell history.
+Using `--token-file` avoids putting credentials in shell history.
 
 ```bash
 mkdir -p .secrets
-printf '%s\n' 'YOUR_GITHUB_TOKEN' > .secrets/github-token
-chmod 600 .secrets/github-token
+cat > .secrets/github.env <<'EOF'
+ACCOUNT=your-account
+GITHUB_TOKEN=YOUR_GITHUB_TOKEN
+EOF
+chmod 600 .secrets/github.env
 ```
 
 Run with:
 
 ```bash
-./mirror-github-repos.sh --account your-account --token-file .secrets/github-token
+./mirror-github-repos.sh --token-file .secrets/github.env
 ```
+
+Notes:
+- CLI flags still override values from the credentials file.
+- Backward compatibility is preserved: a token-only file with a single line still works.
 
 ## Examples
 
 Dry-run everything:
 
 ```bash
-./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --dry-run
+./mirror-github-repos.sh --account your-account --token-file .secrets/github.env --dry-run
 ```
 
 Mirror into a custom directory:
 
 ```bash
-./mirror-github-repos.sh --account your-account --dest /volume1/backups/github --token-file .secrets/github-token
+./mirror-github-repos.sh --account your-account --dest /volume1/backups/github --token-file .secrets/github.env
 ```
 
 Skip forked repositories:
 
 ```bash
-./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --skip-forks
+./mirror-github-repos.sh --account your-account --token-file .secrets/github.env --skip-forks
 ```
 
 Only mirror repositories matching a regex (name only):
 
 ```bash
-./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --repo-regex '^(llvm|clang|lldb)$'
+./mirror-github-repos.sh --account your-account --token-file .secrets/github.env --repo-regex '^(llvm|clang|lldb)$'
 ```
 
 Mirror and fetch LFS objects:
 
 ```bash
-./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --with-lfs
+./mirror-github-repos.sh --account your-account --token-file .secrets/github.env --with-lfs
 ```
 
 ## Behavior Notes
