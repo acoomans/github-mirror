@@ -1,7 +1,7 @@
 # Code
 
 - Ensure the code can run under macOS, Debian, and Synology DSM
-- Avoid dependencies as much as possible
+- Do not use any dependency that is not commonly available by default on these platforms (e.g. no `jq` for JSON parsing), with the exception of the "Git server" package on Synology DSM which provides `git` command line tools
 
 # Commit Messages
 
