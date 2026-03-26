@@ -20,6 +20,7 @@ Notes:
   - Existing mirrors are updated with fetch --prune.
   - New repositories are mirrored with git clone --mirror.
   - For private repositories, pass a token with appropriate permissions.
+  - Uses curl when available, otherwise falls back to wget.
 EOF
 }
 
@@ -30,6 +31,16 @@ err() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || err "Required command not found: $1"
+}
+
+select_http_client() {
+  if command -v curl >/dev/null 2>&1; then
+    HTTP_CLIENT="curl"
+  elif command -v wget >/dev/null 2>&1; then
+    HTTP_CLIENT="wget"
+  else
+    err "Required command not found: curl or wget"
+  fi
 }
 
 url_encode() {
@@ -61,10 +72,18 @@ json_repo_name_and_fork() {
 
 http_get() {
   local url="$1"
-  if [[ -n "$TOKEN" ]]; then
-    curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${TOKEN}" "$url"
+  if [[ "$HTTP_CLIENT" == "curl" ]]; then
+    if [[ -n "$TOKEN" ]]; then
+      curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${TOKEN}" "$url"
+    else
+      curl -fsSL -H "Accept: application/vnd.github+json" "$url"
+    fi
   else
-    curl -fsSL -H "Accept: application/vnd.github+json" "$url"
+    if [[ -n "$TOKEN" ]]; then
+      wget -qO- --header="Accept: application/vnd.github+json" --header="Authorization: Bearer ${TOKEN}" "$url"
+    else
+      wget -qO- --header="Accept: application/vnd.github+json" "$url"
+    fi
   fi
 }
 
@@ -234,6 +253,7 @@ require_cmd git
 require_cmd sed
 require_cmd grep
 require_cmd jq
+select_http_client
 
 mkdir -p "$DEST_DIR"
 
