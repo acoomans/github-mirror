@@ -71,7 +71,12 @@ extract_json_string_field() {
 
 json_repo_name_and_fork() {
   local json="$1"
-  jq -r '.[] | select(.full_name != null) | [.full_name, (.fork | tostring)] | @tsv' <<<"$json"
+
+  local names forks
+  names="$(printf '%s' "$json" | grep -oE '"full_name"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/')"
+  forks="$(printf '%s' "$json" | grep -oE '"fork"[[:space:]]*:[[:space:]]*(true|false)' | sed -E 's/.*(true|false)$/\1/')"
+
+  paste <(printf '%s\n' "$names") <(printf '%s\n' "$forks")
 }
 
 http_get() {
@@ -89,11 +94,6 @@ http_get() {
       wget -qO- --header="Accept: application/vnd.github+json" "$url"
     fi
   fi
-}
-
-json_type() {
-  local json="$1"
-  jq -r 'type' <<<"$json"
 }
 
 get_account_type() {
@@ -134,7 +134,9 @@ list_repos() {
       return 1
     }
 
-    if [[ "$(json_type "$page_data")" != "array" ]]; then
+    local first_char
+    first_char="$(printf '%s' "$page_data" | sed -E 's/^[[:space:]]+//' | cut -c1)"
+    if [[ "$first_char" != "[" ]]; then
       echo "GitHub API returned a non-repository response on page ${page}." >&2
       echo "This is often caused by rate limiting or insufficient token permissions." >&2
       return 1
@@ -332,11 +334,9 @@ fi
   err "--account is required"
 }
 
-require_cmd curl
 require_cmd git
 require_cmd sed
 require_cmd grep
-require_cmd jq
 select_http_client
 
 if [[ "$WITH_LFS" == "1" ]]; then
