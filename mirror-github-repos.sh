@@ -6,7 +6,7 @@ usage() {
 Mirror all repositories for a GitHub account.
 
 Usage:
-  mirror-github-repos.sh --account ACCOUNT [--dest DIR] [--token TOKEN] [--token-file FILE] [--dry-run] [--skip-forks]
+  mirror-github-repos.sh --account ACCOUNT [--dest DIR] [--token TOKEN] [--token-file FILE] [--dry-run] [--skip-forks] [--with-lfs]
 
 Options:
   -a, --account ACCOUNT   GitHub user or organization name (required)
@@ -15,11 +15,13 @@ Options:
   -T, --token-file FILE   Read GitHub token from file (first line)
   -n, --dry-run           Print planned actions without cloning/fetching
   -s, --skip-forks        Skip repositories where "fork" is true
+  -l, --with-lfs          Fetch Git LFS objects with --all after mirror/update
   -h, --help              Show this help
 
 Notes:
   - Existing mirrors are updated with fetch --prune.
   - New repositories are mirrored with git clone --mirror.
+  - LFS objects are fetched only when --with-lfs is enabled.
   - For private repositories, pass a token with appropriate permissions.
   - Uses curl when available, otherwise falls back to wget.
 EOF
@@ -220,6 +222,35 @@ clone_or_update_repo() {
 
     LAST_ACTION="mirrored"
   fi
+
+  if [[ "$WITH_LFS" == "1" ]]; then
+    echo "Fetching LFS objects for ${full_name}"
+
+    if [[ -n "$TOKEN" ]]; then
+      local auth_remote="__lfs_auth__"
+      if git -C "$repo_path" remote | grep -qx "$auth_remote"; then
+        auth_remote="__lfs_auth_2__"
+      fi
+
+      if ! git -C "$repo_path" remote add "$auth_remote" "$auth_url"; then
+        echo "Failed to create temporary LFS auth remote for ${full_name}" >&2
+        return 1
+      fi
+
+      if ! git -C "$repo_path" lfs fetch --all "$auth_remote"; then
+        git -C "$repo_path" remote remove "$auth_remote" >/dev/null 2>&1 || true
+        echo "LFS fetch failed for ${full_name}" >&2
+        return 1
+      fi
+
+      git -C "$repo_path" remote remove "$auth_remote" >/dev/null 2>&1 || true
+    else
+      if ! git -C "$repo_path" lfs fetch --all origin; then
+        echo "LFS fetch failed for ${full_name}" >&2
+        return 1
+      fi
+    fi
+  fi
 }
 
 ACCOUNT=""
@@ -228,6 +259,7 @@ TOKEN="${GITHUB_TOKEN:-}"
 TOKEN_FILE=""
 DRY_RUN="0"
 SKIP_FORKS="0"
+WITH_LFS="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -259,6 +291,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_FORKS="1"
       shift
       ;;
+    -l|--with-lfs)
+      WITH_LFS="1"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -286,6 +322,12 @@ require_cmd sed
 require_cmd grep
 require_cmd jq
 select_http_client
+
+if [[ "$WITH_LFS" == "1" ]]; then
+  if ! git lfs version >/dev/null 2>&1; then
+    err "git-lfs is required when --with-lfs is enabled"
+  fi
+fi
 
 mkdir -p "$DEST_DIR"
 

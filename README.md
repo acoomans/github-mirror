@@ -5,6 +5,7 @@
 It supports:
 - creating new mirrors
 - updating existing mirrors
+- optional Git LFS object backup (`--with-lfs`)
 - dry-run mode
 - skipping forked repositories
 - token from environment, CLI, or file
@@ -33,6 +34,7 @@ Options:
 - `-T, --token-file FILE` read GitHub token from first line of file
 - `-n, --dry-run` show planned operations without cloning/fetching
 - `-s, --skip-forks` skip repositories where `fork=true`
+- `-l, --with-lfs` fetch all Git LFS objects after mirror/update
 - `-h, --help` show help
 
 ## Recommended Auth Setup
@@ -71,10 +73,17 @@ Skip forked repositories:
 ./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --skip-forks
 ```
 
+Mirror and fetch LFS objects:
+
+```bash
+./mirror-github-repos.sh --account your-account --token-file .secrets/github-token --with-lfs
+```
+
 ## Behavior Notes
 
 - Existing mirrors are updated with prune.
 - New repositories are cloned with `git clone --mirror`.
+- When `--with-lfs` is enabled, the script runs `git lfs fetch --all` per processed repository.
 - After cloning with a token, the script resets origin URL to a token-free URL.
 - If one repository fails, the script continues with the next one.
 - The script exits non-zero if any repositories failed.
