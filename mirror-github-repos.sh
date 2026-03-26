@@ -64,17 +64,50 @@ url_encode() {
 extract_json_string_field() {
   local json="$1"
   local field="$2"
-  local value
-  value="$(printf '%s' "$json" | sed -n -E "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p" | head -n1)"
-  printf '%s' "$value"
+  printf '%s\n' "$json" | awk -v key="$field" '
+    BEGIN {
+      pattern = "\"" key "\"[[:space:]]*:[[:space:]]*\""
+    }
+    {
+      if (match($0, pattern)) {
+        rest = substr($0, RSTART + RLENGTH)
+        if (match(rest, /\"/)) {
+          print substr(rest, 1, RSTART - 1)
+          exit
+        }
+      }
+    }
+  '
 }
 
 json_repo_name_and_fork() {
   local json="$1"
 
   local names forks
-  names="$(printf '%s' "$json" | grep -oE '"full_name"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/')"
-  forks="$(printf '%s' "$json" | grep -oE '"fork"[[:space:]]*:[[:space:]]*(true|false)' | sed -E 's/.*(true|false)$/\1/')"
+  names="$(printf '%s\n' "$json" | awk '
+    {
+      line = $0
+      while (match(line, /"full_name"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+        token = substr(line, RSTART, RLENGTH)
+        sub(/^"full_name"[[:space:]]*:[[:space:]]*"/, "", token)
+        sub(/"$/, "", token)
+        print token
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ')"
+
+  forks="$(printf '%s\n' "$json" | awk '
+    {
+      line = $0
+      while (match(line, /"fork"[[:space:]]*:[[:space:]]*(true|false)/)) {
+        token = substr(line, RSTART, RLENGTH)
+        sub(/^"fork"[[:space:]]*:[[:space:]]*/, "", token)
+        print token
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ')"
 
   paste <(printf '%s\n' "$names") <(printf '%s\n' "$forks")
 }
@@ -134,8 +167,9 @@ list_repos() {
       return 1
     }
 
-    local first_char
-    first_char="$(printf '%s' "$page_data" | sed -E 's/^[[:space:]]+//' | cut -c1)"
+    local trimmed first_char
+    trimmed="${page_data#"${page_data%%[![:space:]]*}"}"
+    first_char="${trimmed:0:1}"
     if [[ "$first_char" != "[" ]]; then
       echo "GitHub API returned a non-repository response on page ${page}." >&2
       echo "This is often caused by rate limiting or insufficient token permissions." >&2
@@ -231,7 +265,7 @@ clone_or_update_repo() {
 
     if [[ -n "$TOKEN" ]]; then
       local auth_remote="__lfs_auth__"
-      if git -C "$repo_path" remote | grep -qx "$auth_remote"; then
+      if git -C "$repo_path" remote | awk -v target="$auth_remote" '$0 == target { found = 1 } END { exit !found }'; then
         auth_remote="__lfs_auth_2__"
       fi
 
@@ -335,8 +369,7 @@ fi
 }
 
 require_cmd git
-require_cmd sed
-require_cmd grep
+require_cmd awk
 select_http_client
 
 if [[ "$WITH_LFS" == "1" ]]; then

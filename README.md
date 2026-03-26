@@ -16,11 +16,10 @@ It supports:
 ## Requirements
 
 - `git`
-- `sed`
-- `grep`
+- `awk`
 - `curl` or `wget`
 
-The script intentionally avoids external JSON tooling (no `jq`) so it runs with common default utilities on macOS and Synology DSM.
+The script intentionally avoids external JSON tooling (no `jq`) and uses portable shell/awk patterns for compatibility across macOS, Debian, and Synology DSM.
 
 ## Usage
 
