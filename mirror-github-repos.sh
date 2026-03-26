@@ -110,7 +110,13 @@ json_repo_name_and_fork() {
     }
   ')"
 
-  paste <(printf '%s\n' "$names") <(printf '%s\n' "$forks")
+  if [[ -z "$names" || -z "$forks" ]]; then
+    return 0
+  fi
+
+  paste <(printf '%s\n' "$names") <(printf '%s\n' "$forks") | awk -F'\t' '
+    NF >= 2 && $1 != "" && ($2 == "true" || $2 == "false")
+  '
 }
 
 http_get() {
