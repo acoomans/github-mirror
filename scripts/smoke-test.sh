@@ -120,8 +120,7 @@ grep -q "Summary:" "$output_file_bitbucket"
 grep -q "failed: 0" "$output_file_bitbucket"
 
 cat >"$work_dir/gog-cookies.txt" <<'EOF'
-# Netscape HTTP Cookie File
-.gog.com	TRUE	/	FALSE	2147483647	gog_lc	en-US
+gog_lc	BE_EUR_en-US	.gog.com	/	2027-03-27T02:01:23.384Z	18			Lax		Medium
 EOF
 
 output_file_gog="$work_dir/output-gog.txt"
@@ -135,6 +134,7 @@ output_file_gog="$work_dir/output-gog.txt"
     --dry-run
 ) >"$output_file_gog" 2>&1
 
+grep -q "Using Chrome table cookies format (converted)" "$output_file_gog"
 grep -q "Running preflight auth check" "$output_file_gog"
 grep -q "Preflight auth check passed" "$output_file_gog"
 grep -q "Listing owned GOG games" "$output_file_gog"

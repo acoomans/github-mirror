@@ -9,7 +9,7 @@ Usage:
   backup-gog-games.sh --cookies FILE [--dest DIR] [--game-regex REGEX] [--dry-run] [--preflight-auth]
 
 Options:
-  -c, --cookies FILE       Netscape-format cookies file for gog.com (required)
+  -c, --cookies FILE       Cookie file: Netscape cookies.txt or Chrome cookie-table paste (required)
   -d, --dest DIR           Destination directory for downloads (default: ./gog-downloads)
   -r, --game-regex REGEX   Only process games whose slug matches REGEX
   -n, --dry-run            Print planned downloads without downloading files
@@ -18,6 +18,7 @@ Options:
 
 Notes:
   - You must be logged into gog.com and export cookies from your browser.
+  - Cookie input is auto-detected: Netscape format is used directly, Chrome table rows are converted.
   - The script queries owned products from GOG account APIs.
   - Downloads are fetched with content-disposition so installer filenames are preserved.
   - Uses curl when available, otherwise falls back to wget.
@@ -68,10 +69,144 @@ validate_regex() {
 http_get() {
   local url="$1"
   if [[ "$HTTP_CLIENT" == "curl" ]]; then
-    curl -sSL --cookie "$COOKIES_FILE" --cookie-jar "$COOKIE_JAR" "$url"
+    curl -sSL --cookie "$RUNTIME_COOKIES_FILE" --cookie-jar "$COOKIE_JAR" "$url"
   else
-    wget -qO- --load-cookies "$COOKIES_FILE" --save-cookies "$COOKIE_JAR" --keep-session-cookies "$url"
+    wget -qO- --load-cookies "$RUNTIME_COOKIES_FILE" --save-cookies "$COOKIE_JAR" --keep-session-cookies "$url"
   fi
+}
+
+detect_cookie_format() {
+  local cookie_file="$1"
+  local first_line
+
+  first_line="$(awk 'NF && $1 !~ /^#/ { print; exit }' "$cookie_file")"
+  [[ -z "$first_line" ]] && err "Cookies file is empty: ${cookie_file}"
+
+  if printf '%s\n' "$first_line" | awk -F'\t' '
+    NF >= 7 &&
+    ($2 == "TRUE" || $2 == "FALSE") &&
+    $3 ~ /^\// &&
+    ($4 == "TRUE" || $4 == "FALSE") &&
+    $5 ~ /^[0-9]+$/ { exit 0 }
+    { exit 1 }
+  '; then
+    printf 'netscape'
+    return 0
+  fi
+
+  if printf '%s\n' "$first_line" | awk -F'\t' '
+    NF >= 5 &&
+    $1 != "Name" &&
+    $3 ~ /\./ &&
+    $4 ~ /^\// { exit 0 }
+    { exit 1 }
+  '; then
+    printf 'chrome-table'
+    return 0
+  fi
+
+  err "Unrecognized cookies format in ${cookie_file}; expected Netscape cookies.txt or Chrome table rows"
+}
+
+iso_utc_to_epoch() {
+  local value="$1"
+  local value_no_ms="$value"
+
+  if [[ "$value_no_ms" == *.*Z ]]; then
+    value_no_ms="${value_no_ms%%.*}Z"
+  fi
+
+  if date -u -d "$value" +%s >/dev/null 2>&1; then
+    date -u -d "$value" +%s
+    return 0
+  fi
+
+  if [[ "$value_no_ms" != "$value" ]] && date -u -d "$value_no_ms" +%s >/dev/null 2>&1; then
+    date -u -d "$value_no_ms" +%s
+    return 0
+  fi
+
+  if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value_no_ms" +%s >/dev/null 2>&1; then
+    date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$value_no_ms" +%s
+    return 0
+  fi
+
+  return 1
+}
+
+convert_chrome_cookie_table() {
+  local input_file="$1"
+  local output_file="$2"
+  local line
+
+  printf '# Netscape HTTP Cookie File\n' > "$output_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" ]] && continue
+    [[ "${line:0:1}" == "#" ]] && continue
+
+    IFS=$'\t' read -r -a cols <<< "$line"
+    [[ ${#cols[@]} -lt 5 ]] && continue
+
+    local name value domain path expires_raw secure_raw
+    name="${cols[0]}"
+    value="${cols[1]}"
+    domain="${cols[2]}"
+    path="${cols[3]}"
+    expires_raw="${cols[4]}"
+    secure_raw="${cols[7]:-}"
+
+    # Skip header rows from copy/paste, e.g. Name Value Domain ...
+    if [[ "$name" == "Name" && "$value" == "Value" ]]; then
+      continue
+    fi
+
+    if [[ -z "$name" || -z "$domain" || -z "$path" ]]; then
+      continue
+    fi
+
+    local include_subdomains secure expires_epoch
+    include_subdomains="FALSE"
+    [[ "$domain" == .* ]] && include_subdomains="TRUE"
+
+    secure="FALSE"
+    if [[ "$secure_raw" == "TRUE" || "$secure_raw" == "true" || "$secure_raw" == "1" || "$secure_raw" == "✓" ]]; then
+      secure="TRUE"
+    fi
+
+    if [[ "$expires_raw" == "Session" || -z "$expires_raw" ]]; then
+      expires_epoch="0"
+    elif [[ "$expires_raw" =~ ^[0-9]+$ ]]; then
+      expires_epoch="$expires_raw"
+    else
+      expires_epoch="$(iso_utc_to_epoch "$expires_raw")" || err "Could not parse cookie expiry '${expires_raw}' in ${input_file}"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$domain" "$include_subdomains" "$path" "$secure" "$expires_epoch" "$name" "$value" >> "$output_file"
+  done < "$input_file"
+}
+
+prepare_cookie_file() {
+  local input_file="$1"
+  local format
+
+  format="$(detect_cookie_format "$input_file")"
+  if [[ "$format" == "netscape" ]]; then
+    RUNTIME_COOKIES_FILE="$input_file"
+    echo "Using Netscape cookies format"
+    return 0
+  fi
+
+  if [[ "$format" == "chrome-table" ]]; then
+    RUNTIME_COOKIES_FILE="$CONVERTED_COOKIES_FILE"
+    convert_chrome_cookie_table "$input_file" "$RUNTIME_COOKIES_FILE"
+    echo "Using Chrome table cookies format (converted)"
+    return 0
+  fi
+
+  err "Unsupported cookies format in ${input_file}"
 }
 
 looks_like_login_response() {
@@ -205,12 +340,12 @@ download_link() {
   fi
 
   if [[ "$HTTP_CLIENT" == "curl" ]]; then
-    if ! curl -fL -C - -OJ --cookie "$COOKIES_FILE" --cookie-jar "$COOKIE_JAR" "$link"; then
+    if ! curl -fL -C - -OJ --cookie "$RUNTIME_COOKIES_FILE" --cookie-jar "$COOKIE_JAR" "$link"; then
       echo "Download failed for ${link}" >&2
       return 1
     fi
   else
-    if ! wget -c --content-disposition --load-cookies "$COOKIES_FILE" --save-cookies "$COOKIE_JAR" --keep-session-cookies "$link"; then
+    if ! wget -c --content-disposition --load-cookies "$RUNTIME_COOKIES_FILE" --save-cookies "$COOKIE_JAR" --keep-session-cookies "$link"; then
       echo "Download failed for ${link}" >&2
       return 1
     fi
@@ -287,6 +422,8 @@ DRY_RUN="0"
 PREFLIGHT_AUTH="0"
 HTTP_CLIENT=""
 COOKIE_JAR=""
+RUNTIME_COOKIES_FILE=""
+CONVERTED_COOKIES_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -336,7 +473,10 @@ validate_regex "$GAME_REGEX"
 select_http_client
 
 COOKIE_JAR="$(mktemp)"
-trap 'rm -f "$COOKIE_JAR"' EXIT
+CONVERTED_COOKIES_FILE="$(mktemp)"
+trap 'rm -f "$COOKIE_JAR" "$CONVERTED_COOKIES_FILE"' EXIT
+
+prepare_cookie_file "$COOKIES_FILE"
 
 mkdir -p "$DEST_DIR"
 

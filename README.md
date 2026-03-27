@@ -57,7 +57,7 @@ Options:
 - `-h, --help` show help
 
 GOG download options:
-- `-c, --cookies FILE` Netscape-format cookies file for `gog.com` (required)
+- `-c, --cookies FILE` cookie input for `gog.com` (required): Netscape cookies.txt or Chrome cookie-table copy/paste
 - `-d, --dest DIR` destination directory for downloaded files (default: `./gog-downloads`)
 - `-r, --game-regex REGEX` only process games whose slug matches regex
 - `-n, --dry-run` show planned downloads without downloading files
@@ -160,6 +160,10 @@ Run with explicit auth preflight check:
 ```bash
 ./backup-gog-games.sh --cookies .secrets/gog-cookies.txt --dest "/volume1/backups/gog-games" --preflight-auth
 ```
+
+Cookie file formats accepted by the GOG script:
+- Netscape cookies.txt format (preferred)
+- Chrome cookie-table copy/paste rows from DevTools Application tab (the script converts this format automatically)
 
 ## Behavior Notes
 
