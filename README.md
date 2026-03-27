@@ -1,6 +1,7 @@
 # Code Mirror Scripts
 
 Mirrors all repositories for a GitHub account or a Bitbucket workspace into local bare repositories (`*.git`).
+Also includes a GOG download script for pulling owned game files from GOG servers.
 
 
 It supports:
@@ -13,6 +14,13 @@ It supports:
 - `curl` with `wget` fallback for API calls
 - continue-on-error behavior (one repo failure does not stop the whole run)
 - end-of-run summary counters
+
+For GOG downloads, it supports:
+- listing owned games from GOG account APIs
+- downloading game files using authenticated browser cookies
+- regex filtering by game slug
+- dry-run mode
+- continue-on-error behavior and end-of-run summary counters
 
 Provider-specific notes:
 - GitHub script supports `--account` and token auth via GitHub token.
@@ -33,6 +41,7 @@ The script intentionally avoids external JSON tooling (no `jq`) and uses portabl
 ```bash
 ./mirror-github-repos.sh --account ACCOUNT [options]
 ./mirror-bitbucket-repos.sh --account WORKSPACE [options]
+./backup-gog-games.sh --cookies FILE [options]
 ```
 
 Options:
@@ -44,6 +53,13 @@ Options:
 - `-s, --skip-forks` skip repositories where `fork=true`
 - `-r, --repo-regex REGEX` only process repositories whose name matches the regex
 - `-l, --with-lfs` fetch all Git LFS objects after mirror/update
+- `-h, --help` show help
+
+GOG download options:
+- `-c, --cookies FILE` Netscape-format cookies file for `gog.com` (required)
+- `-d, --dest DIR` destination directory for downloaded files (default: `./gog-downloads`)
+- `-r, --game-regex REGEX` only process games whose slug matches regex
+- `-n, --dry-run` show planned downloads without downloading files
 - `-h, --help` show help
 
 ## Recommended Auth Setup
@@ -123,6 +139,18 @@ Bitbucket dry-run with regex and fork skipping:
 
 ```bash
 ./mirror-bitbucket-repos.sh --workspace your-workspace --token-file .secrets/bitbucket.env --skip-forks --repo-regex '^(my-repo)$' --dry-run
+```
+
+Download all owned GOG game files:
+
+```bash
+./backup-gog-games.sh --cookies .secrets/gog-cookies.txt --dest "/volume1/backups/gog-games"
+```
+
+Dry-run GOG download with regex filter:
+
+```bash
+./backup-gog-games.sh --cookies .secrets/gog-cookies.txt --dest "/volume1/backups/gog-games" --game-regex '^(cyberpunk-2077)$' --dry-run
 ```
 
 ## Behavior Notes

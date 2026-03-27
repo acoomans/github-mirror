@@ -42,6 +42,15 @@ case "$url" in
   "https://api.bitbucket.org/2.0/repositories/acoomans?page=2&pagelen=100")
     printf '{"values":[]}\n'
     ;;
+  "https://www.gog.com/account/getFilteredProducts?mediaType=1&sortBy=title&page=1")
+    printf '{"totalPages":1,"products":[{"id":111,"slug":"cyberpunk-2077"},{"id":222,"slug":"baldurs-gate-3"}]}'
+    ;;
+  "https://www.gog.com/account/gameDetails/111.json")
+    printf '{"downloads":{"installers":[{"downlink":"https:\\/\\/www.gog.com\\/downlink\\/cp-setup"},{"downlink":"https:\\/\\/www.gog.com\\/downlink\\/cp-patch"}]}}'
+    ;;
+  "https://www.gog.com/account/gameDetails/222.json")
+    printf '{"downloads":{"installers":[{"downlink":"https:\\/\\/www.gog.com\\/downlink\\/bg3-setup"}]}}'
+    ;;
   *)
     echo "mock curl: unexpected URL: $url" >&2
     exit 2
@@ -109,5 +118,29 @@ grep -q "Processing 1 repositories" "$output_file_bitbucket"
 grep -q "\[dry-run\] mirror acoomans/ACReuseQueue" "$output_file_bitbucket"
 grep -q "Summary:" "$output_file_bitbucket"
 grep -q "failed: 0" "$output_file_bitbucket"
+
+cat >"$work_dir/gog-cookies.txt" <<'EOF'
+# Netscape HTTP Cookie File
+.gog.com	TRUE	/	FALSE	2147483647	gog_lc	en-US
+EOF
+
+output_file_gog="$work_dir/output-gog.txt"
+(
+  cd "$repo_root"
+  PATH="$work_dir/mockbin:$PATH" ./backup-gog-games.sh \
+    --cookies "$work_dir/gog-cookies.txt" \
+    --dest "$work_dir/gog-dest" \
+    --game-regex '^(cyberpunk-2077)$' \
+    --dry-run
+) >"$output_file_gog" 2>&1
+
+grep -q "Listing owned GOG games" "$output_file_gog"
+grep -q "Found 2 candidate games" "$output_file_gog"
+grep -q "Skipping non-matching game baldurs-gate-3" "$output_file_gog"
+grep -q "Processing 1 games" "$output_file_gog"
+grep -q "Inspecting cyberpunk-2077 (111)" "$output_file_gog"
+grep -q "\[dry-run\] download https://www.gog.com/downlink/cp-setup" "$output_file_gog"
+grep -q "Summary:" "$output_file_gog"
+grep -q "failed: 0" "$output_file_gog"
 
 echo "smoke test OK"
