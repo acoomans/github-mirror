@@ -36,6 +36,18 @@ case "$url" in
   "https://api.github.com/user/repos?type=owner&per_page=100&page=2")
     printf '[]\n'
     ;;
+  "https://api.github.com/gists?per_page=100&page=1")
+    printf '[{"id":"11111111111111111111111111111111","git_pull_url":"https://gist.github.com/11111111111111111111111111111111.git"},{"id":"22222222222222222222222222222222","git_pull_url":"https://gist.github.com/22222222222222222222222222222222.git"}]\n'
+    ;;
+  "https://api.github.com/gists?per_page=100&page=2")
+    printf '[]\n'
+    ;;
+  "https://api.github.com/users/acoomans/gists?per_page=100&page=1")
+    printf '[{"id":"11111111111111111111111111111111","git_pull_url":"https://gist.github.com/11111111111111111111111111111111.git"},{"id":"22222222222222222222222222222222","git_pull_url":"https://gist.github.com/22222222222222222222222222222222.git"}]\n'
+    ;;
+  "https://api.github.com/users/acoomans/gists?per_page=100&page=2")
+    printf '[]\n'
+    ;;
   "https://api.bitbucket.org/2.0/repositories/acoomans?pagelen=100")
     printf '{"values":[{"full_name":"acoomans/ACReuseQueue","name":"ACReuseQueue"},{"full_name":"acoomans/forked","name":"forked","parent":{"full_name":"upstream/forked"}}],"next":"https://api.bitbucket.org/2.0/repositories/acoomans?page=2&pagelen=100"}\n'
     ;;
@@ -88,6 +100,23 @@ grep -q "Processing 1 repositories" "$output_file_token_flag"
 grep -q "\[dry-run\] mirror acoomans/433Utils" "$output_file_token_flag"
 grep -q "Summary:" "$output_file_token_flag"
 grep -q "failed: 0" "$output_file_token_flag"
+
+output_file_gists="$work_dir/output-gists.txt"
+(
+  cd "$repo_root"
+  PATH="$work_dir/mockbin:$PATH" ./mirror-github-gists.sh \
+    --token-file "$work_dir/creds.env" \
+    --dest "$work_dir/mirrors-gists" \
+    --gist-regex '^(11111111111111111111111111111111)$' \
+    --dry-run
+) >"$output_file_gists" 2>&1
+
+grep -q "Listing gists for acoomans" "$output_file_gists"
+grep -q "Found 2 gists" "$output_file_gists"
+grep -q "Processing 1 gists" "$output_file_gists"
+grep -q "\[dry-run\] mirror 11111111111111111111111111111111" "$output_file_gists"
+grep -q "Summary:" "$output_file_gists"
+grep -q "failed: 0" "$output_file_gists"
 
 printf '\xEF\xBB\xBFWORKSPACE=acoomans\nBITBUCKET_USERNAME=dummy-user\nBITBUCKET_APP_PASSWORD=dummy-token\n' >"$work_dir/bitbucket-creds.env"
 
