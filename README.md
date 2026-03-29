@@ -52,6 +52,9 @@ GitHub gist-specific differences:
 - default destination is `./mirrors-gists`
 - filter option is `-r, --gist-regex REGEX` (matches gist ID)
 - there is no `--skip-forks` or `--with-lfs` mode for gists
+- missing gists are kept untouched by default
+- use `-u, --update-local` to update local mirrors not returned by API
+- use `-p, --prune-local` to delete local mirrors that are not returned by API
 
 ## Recommended Auth Setup
 
@@ -158,6 +161,18 @@ cd /path/to/mirrors-gists
 for i in *.git; do
 	git clone "$i" "${i%.git}"
 done
+```
+
+Prune local gist mirrors that are no longer returned by API (opt-in):
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env --prune-local
+```
+
+Update local gist mirrors that are no longer returned by API (opt-in):
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env --update-local
 ```
 
 Bitbucket dry-run with regex and fork skipping:

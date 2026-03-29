@@ -6,7 +6,7 @@ usage() {
 Mirror all gists for a GitHub account.
 
 Usage:
-  mirror-github-gists.sh --account ACCOUNT [--dest DIR] [--token TOKEN] [--token-file FILE] [--dry-run] [--gist-regex REGEX]
+  mirror-github-gists.sh --account ACCOUNT [--dest DIR] [--token TOKEN] [--token-file FILE] [--dry-run] [--gist-regex REGEX] [--update-local] [--prune-local]
 
 Options:
   -a, --account ACCOUNT   GitHub username whose gists will be mirrored (required)
@@ -15,11 +15,17 @@ Options:
   -T, --token-file FILE   Read .env-style credentials file (ACCOUNT/GITHUB_TOKEN)
   -n, --dry-run           Print planned actions without cloning/fetching
   -r, --gist-regex REGEX  Only process gists whose ID matches REGEX
+  -u, --update-local
+                           Update local mirrors not returned by API (opt-in)
+  -p, --prune-local       Delete local mirrors not returned by API (opt-in)
   -h, --help              Show this help
 
 Notes:
   - Existing mirrors are updated with fetch --prune.
   - New gists are mirrored with git clone --mirror.
+  - By default, local mirrors that are missing from API are kept untouched.
+  - Use --update-local to update local mirrors not returned by API.
+  - Use --prune-local to remove local mirrors not returned by API.
   - Credential file supports ACCOUNT/GITHUB_ACCOUNT and TOKEN/GITHUB_TOKEN.
   - For private gists, pass a token that belongs to the same ACCOUNT.
   - Uses curl when available, otherwise falls back to wget.
@@ -266,6 +272,41 @@ safe_clone_url() {
   printf '%s' "$clean_url"
 }
 
+list_existing_local_mirrors() {
+  local dest_dir="$1"
+
+  [[ ! -d "$dest_dir" ]] && return 0
+
+  local path base gist_id
+  for path in "$dest_dir"/*.git; do
+    [[ ! -d "$path" ]] && continue
+    [[ ! -f "$path/HEAD" ]] && continue
+    base="${path##*/}"
+    gist_id="${base%.git}"
+    printf '%s\n' "$gist_id"
+  done
+}
+
+prune_local_mirror() {
+  local gist_id="$1"
+  local dest_dir="$2"
+
+  local gist_path
+  gist_path="${dest_dir}/${gist_id}.git"
+
+  [[ ! -d "$gist_path" ]] && return 0
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[dry-run] prune ${gist_id} -> ${gist_path}"
+    LAST_ACTION="planned_prune"
+    return 0
+  fi
+
+  echo "Pruning ${gist_id}"
+  rm -rf "$gist_path"
+  LAST_ACTION="pruned"
+}
+
 load_credentials_file() {
   local creds_file="$1"
   local first_plain_value=""
@@ -340,6 +381,17 @@ clone_or_update_gist() {
 
   local gist_path auth_url clean_url
   gist_path="${dest_dir}/${gist_id}.git"
+
+  if [[ -z "$clone_url" && -d "$gist_path" ]]; then
+    clone_url="$(git -C "$gist_path" remote get-url origin 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$clone_url" ]]; then
+    echo "Skipping ${gist_id}: clone URL is unknown" >&2
+    LAST_ACTION="skipped"
+    return 0
+  fi
+
   auth_url="$(auth_clone_url "$clone_url")"
   clean_url="$(safe_clone_url "$clone_url")"
 
@@ -398,6 +450,8 @@ TOKEN="${GITHUB_TOKEN:-}"
 TOKEN_FILE=""
 DRY_RUN="0"
 GIST_REGEX=""
+PRUNE_MISSING="0"
+UPDATE_LOCAL_MISSING="0"
 ACCOUNT_SET_BY_ARG="0"
 TOKEN_SET_BY_ARG="0"
 USED_AUTH_GISTS_ENDPOINT="0"
@@ -435,6 +489,14 @@ while [[ $# -gt 0 ]]; do
       [[ $# -lt 2 ]] && err "Missing value for $1"
       GIST_REGEX="$2"
       shift 2
+      ;;
+    -u|--update-local|--update-local-missing)
+      UPDATE_LOCAL_MISSING="1"
+      shift
+      ;;
+    -p|--prune-local|--prune-missing)
+      PRUNE_MISSING="1"
+      shift
       ;;
     -h|--help)
       usage
@@ -492,16 +554,13 @@ if ! list_gists "$ACCOUNT" "$auth_login" >"$gist_rows_file"; then
   err "Failed to list gists for ${ACCOUNT}"
 fi
 
-if ! grep -q '[^[:space:]]' "$gist_rows_file"; then
-  rm -f "$gist_rows_file"
-  echo "No gists found for ${ACCOUNT}"
-  exit 0
+gist_rows=()
+if grep -q '[^[:space:]]' "$gist_rows_file"; then
+  mapfile -t gist_rows <"$gist_rows_file"
 fi
-
-mapfile -t gist_rows <"$gist_rows_file"
 rm -f "$gist_rows_file"
 
-echo "Found ${#gist_rows[@]} gists"
+echo "Found ${#gist_rows[@]} gists from API"
 
 if [[ -n "$TOKEN" && "$USED_AUTH_GISTS_ENDPOINT" == "1" && "$PRIVATE_GISTS_VISIBLE" == "0" ]]; then
   echo "Note: authenticated listing did not include any secret gists."
@@ -512,6 +571,7 @@ fi
 
 gists=()
 filtered_skip_count=0
+selected_ids_file="$(mktemp)"
 for row in "${gist_rows[@]}"; do
   gist_id="${row%%$'\t'*}"
   clone_url="${row##*$'\t'}"
@@ -523,7 +583,47 @@ for row in "${gist_rows[@]}"; do
   fi
 
   gists+=("${gist_id}"$'\t'"${clone_url}")
+  printf '%s\n' "$gist_id" >>"$selected_ids_file"
 done
+
+local_only_count=0
+local_untouched_count=0
+pruned_candidates_count=0
+while IFS= read -r local_gist_id; do
+  [[ -z "$local_gist_id" ]] && continue
+
+  if [[ -s "$selected_ids_file" ]] && grep -Fxq "$local_gist_id" "$selected_ids_file"; then
+    continue
+  fi
+
+  if [[ -n "$GIST_REGEX" && ! "$local_gist_id" =~ $GIST_REGEX ]]; then
+    continue
+  fi
+
+  if [[ "$PRUNE_MISSING" == "1" ]]; then
+    gists+=("${local_gist_id}"$'\t')
+    ((pruned_candidates_count+=1))
+  elif [[ "$UPDATE_LOCAL_MISSING" == "1" ]]; then
+    gists+=("${local_gist_id}"$'\t')
+    ((local_only_count+=1))
+  else
+    ((local_untouched_count+=1))
+  fi
+done < <(list_existing_local_mirrors "$DEST_DIR")
+
+rm -f "$selected_ids_file"
+
+if [[ "$local_only_count" -gt 0 ]]; then
+  echo "Including ${local_only_count} existing local mirrors not returned by API for update"
+fi
+
+if [[ "$local_untouched_count" -gt 0 ]]; then
+  echo "Keeping ${local_untouched_count} local mirrors not returned by API untouched"
+fi
+
+if [[ "$pruned_candidates_count" -gt 0 ]]; then
+  echo "Will prune ${pruned_candidates_count} local mirrors not returned by API"
+fi
 
 if [[ ${#gists[@]} -eq 0 ]]; then
   echo "No gists to mirror after filters"
@@ -538,11 +638,20 @@ updated_count=0
 skipped_count="$filtered_skip_count"
 planned_mirror_count=0
 planned_update_count=0
+pruned_count=0
+planned_prune_count=0
+untouched_count="$local_untouched_count"
 for row in "${gists[@]}"; do
   gist_id="${row%%$'\t'*}"
   clone_url="${row##*$'\t'}"
 
-  if ! clone_or_update_gist "$gist_id" "$clone_url" "$DEST_DIR"; then
+  if [[ "$PRUNE_MISSING" == "1" && -z "$clone_url" ]]; then
+    if ! prune_local_mirror "$gist_id" "$DEST_DIR"; then
+      ((failed_count+=1))
+      echo "Failed ${gist_id}; continuing"
+      continue
+    fi
+  elif ! clone_or_update_gist "$gist_id" "$clone_url" "$DEST_DIR"; then
     ((failed_count+=1))
     echo "Failed ${gist_id}; continuing"
     continue
@@ -564,6 +673,12 @@ for row in "${gists[@]}"; do
     planned_update)
       ((planned_update_count+=1))
       ;;
+    pruned)
+      ((pruned_count+=1))
+      ;;
+    planned_prune)
+      ((planned_prune_count+=1))
+      ;;
     *)
       ;;
   esac
@@ -572,12 +687,19 @@ done
 echo "Summary:"
 echo "  selected: ${#gists[@]}"
 echo "  skipped: ${skipped_count}"
+echo "  untouched_local_only: ${untouched_count}"
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "  planned_mirror: ${planned_mirror_count}"
   echo "  planned_update: ${planned_update_count}"
+  if [[ "$PRUNE_MISSING" == "1" ]]; then
+    echo "  planned_prune: ${planned_prune_count}"
+  fi
 else
   echo "  mirrored: ${mirrored_count}"
   echo "  updated: ${updated_count}"
+  if [[ "$PRUNE_MISSING" == "1" ]]; then
+    echo "  pruned: ${pruned_count}"
+  fi
 fi
 echo "  failed: ${failed_count}"
 
