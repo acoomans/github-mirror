@@ -486,14 +486,20 @@ if [[ -n "$TOKEN" ]]; then
 fi
 
 echo "Listing gists for ${ACCOUNT}..."
-gist_rows_output="$(list_gists "$ACCOUNT" "$auth_login")" || err "Failed to list gists for ${ACCOUNT}"
+gist_rows_file="$(mktemp)"
+if ! list_gists "$ACCOUNT" "$auth_login" >"$gist_rows_file"; then
+  rm -f "$gist_rows_file"
+  err "Failed to list gists for ${ACCOUNT}"
+fi
 
-if [[ -z "${gist_rows_output//[[:space:]]/}" ]]; then
+if ! grep -q '[^[:space:]]' "$gist_rows_file"; then
+  rm -f "$gist_rows_file"
   echo "No gists found for ${ACCOUNT}"
   exit 0
 fi
 
-mapfile -t gist_rows <<<"$gist_rows_output"
+mapfile -t gist_rows <"$gist_rows_file"
+rm -f "$gist_rows_file"
 
 echo "Found ${#gist_rows[@]} gists"
 
