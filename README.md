@@ -1,6 +1,6 @@
 # Code Mirror Scripts
 
-Mirrors all repositories for a GitHub account or a Bitbucket workspace into local bare repositories (`*.git`).
+Mirrors GitHub repositories, GitHub gists, and Bitbucket repositories into local bare repositories (`*.git`).
 
 
 It supports:
@@ -16,6 +16,7 @@ It supports:
 
 Provider-specific notes:
 - GitHub script supports `--account` and token auth via GitHub token.
+- GitHub gist script supports `--account`, supports public and private gists, and includes private gists when the token owner matches the account.
 - Bitbucket script supports `--account`/`--workspace`, and token auth using API tokens (`--username` + `--token`).
 - For Bitbucket token auth, use explicit `ACCOUNT`/`WORKSPACE` plus `BITBUCKET_EMAIL` and `BITBUCKET_TOKEN`.
 - For Bitbucket git clone/fetch with API tokens, the script automatically uses a git-safe auth username when `BITBUCKET_EMAIL` is used for API calls.
@@ -32,6 +33,7 @@ The script intentionally avoids external JSON tooling (no `jq`) and uses portabl
 
 ```bash
 ./mirror-github-repos.sh --account ACCOUNT [options]
+./mirror-github-gists.sh --account ACCOUNT [options]
 ./mirror-bitbucket-repos.sh --account WORKSPACE [options]
 ```
 
@@ -45,6 +47,14 @@ Options:
 - `-r, --repo-regex REGEX` only process repositories whose name matches the regex
 - `-l, --with-lfs` fetch all Git LFS objects after mirror/update
 - `-h, --help` show help
+
+GitHub gist-specific differences:
+- default destination is `./mirrors-gists`
+- filter option is `-r, --gist-regex REGEX` (matches gist ID)
+- there is no `--skip-forks` or `--with-lfs` mode for gists
+- missing gists are kept untouched by default
+- use `-u, --update-local` to update local mirrors not returned by API
+- use `-p, --prune-local` to delete local mirrors that are not returned by API
 
 ## Recommended Auth Setup
 
@@ -64,6 +74,19 @@ Run with:
 ```bash
 ./mirror-github-repos.sh --token-file .secrets/github.env
 ```
+
+GitHub gist run with the same credentials file:
+
+```bash
+./mirror-github-gists.sh --token-file .secrets/github.env
+```
+
+GitHub gist token permissions:
+- Personal access token (classic): include the `gist` scope to access private gists.
+  GitHub does not provide a separate read-only gist scope for classic PATs; `gist` is a combined read/write scope.
+- Fine-grained PATs may return only public gists in practice (and may not expose gist-specific permissions in UI).
+  If you expect secret gists, use a classic PAT with `gist` scope.
+- To include private gists, token owner must match `--account`.
 
 Bitbucket credential file example:
 
@@ -119,6 +142,39 @@ Mirror and fetch LFS objects:
 ./mirror-github-repos.sh --account your-account --token-file .secrets/github.env --with-lfs
 ```
 
+Mirror all gists (public + private when account matches token owner):
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env
+```
+
+Only mirror gists matching an ID regex:
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env --gist-regex '^[0-9a-f]{32}$' --dry-run
+```
+
+Create worktree checkouts from mirrored gists:
+
+```bash
+cd /path/to/mirrors-gists
+for i in *.git; do
+    git clone "$i" "${i%.git}"
+done
+```
+
+Prune local gist mirrors that are no longer returned by API (opt-in):
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env --prune-local
+```
+
+Update local gist mirrors that are no longer returned by API (opt-in):
+
+```bash
+./mirror-github-gists.sh --account your-account --token-file .secrets/github.env --update-local
+```
+
 Bitbucket dry-run with regex and fork skipping:
 
 ```bash
@@ -129,6 +185,7 @@ Bitbucket dry-run with regex and fork skipping:
 
 - Existing mirrors are updated with prune.
 - New repositories are cloned with `git clone --mirror`.
+- New gists are cloned with `git clone --mirror`.
 - When `--with-lfs` is enabled, the script runs `git lfs fetch --all` per processed repository.
 - After cloning with a token, the script resets origin URL to a token-free URL.
 - If one repository fails, the script continues with the next one.
